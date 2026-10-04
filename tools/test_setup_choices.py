@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 import setup  # noqa: E402
 
+setup.ARM64 = False   # these tests describe an x86-64 PC whatever machine runs them
+
 
 def quiet(fn, *args, **kw):
     out = io.StringIO()

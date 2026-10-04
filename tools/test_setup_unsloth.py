@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import setup  # noqa: E402
 
+setup.ARM64 = False   # these tests describe an x86-64 PC whatever machine runs them
+
 M = "UD-Q4_K_XL"
 REV = "38bb39ee97821de2c9009abb7e93950eec396e66"
 
