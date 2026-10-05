@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-04",
+  "model": "Qwen3.8-Flash-Next IQ3_XXS, images on",
+  "context": 131072,
+  "max_tokens": 128,
+  "sampling": "greedy (temperature 0), reasoning_effort none",
+  "runs_per_row": 1,
+  "rows": [
+    {"prompt_tokens": 431,   "prefill_tok_s": 56.1,   "decode_tok_s": 15.3, "wall_s": 16.1, "note": "first request after the warm-up"},
+    {"prompt_tokens": 1582,  "prefill_tok_s": 61.0,   "decode_tok_s": 41.7, "wall_s": 29.0},
+    {"prompt_tokens": 6190,  "prefill_tok_s": 1195.7, "decode_tok_s": 37.3, "wall_s": 8.6},
+    {"prompt_tokens": 12334, "prefill_tok_s": 1293.6, "decode_tok_s": 39.6, "wall_s": 12.8},
+    {"prompt_tokens": 24622, "prefill_tok_s": 1331.9, "decode_tok_s": 38.6, "wall_s": 21.9},
+    {"prompt_tokens": 49199, "prefill_tok_s": 1337.6, "decode_tok_s": 38.2, "wall_s": 40.3},
+    {"prompt_tokens": 75047, "prefill_tok_s": 1328.6, "decode_tok_s": 39.0, "wall_s": 60.0}
+  ]
+}
