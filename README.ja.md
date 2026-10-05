@@ -2,6 +2,101 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md)
 
+> **これは [Niko1221/Strata](https://github.com/Niko1221/Strata) のフォークで、NVIDIA DGX Spark（GB10、Arm64）でも動きます。**
+> 元のプロジェクトは x86-64 の PC 専用です。DGX Spark のセクションより下は元の README のままで、x86-64 の PC について
+> 書かれています。エンジンの功績はすべて元のプロジェクトにあります。
+
+## NVIDIA DGX Spark（GB10、Arm64）で Strata を動かす
+
+このフォークは Arm64 対応を加えて、GB10 搭載機で Strata を動かせるようにします。確認したのは ASUS GX10（DGX Spark と同じチップ）です。
+PC と同じように、チャット、コード作成、**画像の読み取り**ができます。ここで確認したのは、
+**Qwen3.8-Flash-Next の IQ3_XXS、画像あり、131,072 トークンのコンテキスト**です。ほかのサイズも動くはずですが、**確認していません**。
+
+### どのくらい速い？
+
+ASUS GX10 1 台（DGX Spark と同じ GB10 搭載機。GB10、Arm コア 20、CPU と GPU で共有する 121 GiB のメモリ）、エンジン 0.1.38 で測りました。
+各行 1 回のリクエスト、答えは 128 トークン、貪欲デコードです。
+
+| プロンプトの長さ | プロンプトを読む速さ | 答えを書く速さ |
+| ---: | ---: | ---: |
+| 6,190 トークン | 1,196 トークン/秒 | 37 トークン/秒 |
+| 12,334 トークン | 1,294 トークン/秒 | 40 トークン/秒 |
+| 24,622 トークン | 1,332 トークン/秒 | 39 トークン/秒 |
+| 49,199 トークン | 1,338 トークン/秒 | 38 トークン/秒 |
+| 75,047 トークン | 1,329 トークン/秒 | 39 トークン/秒 |
+| 1,582 トークン | **61 トークン/秒** | 42 トークン/秒 |
+| 431 トークン | **56 トークン/秒** | 15 トークン/秒（起動後の最初のリクエスト） |
+
+- 答えを書く速さは、プロンプトがどれだけ長くても（測った 75K トークンまで）約 **38〜42 トークン/秒**で変わりません。
+- **短いプロンプトは、長いものより約 20 倍遅く**読まれます。理由はまだ分かっていません。
+- 数値は各行 1 回の測定で、マシンが通常利用されている状態で測りました。全体の表、条件、注意点は
+  [bench/results/2026-10-05-dgx-spark-gb10](bench/results/2026-10-05-dgx-spark-gb10/README.md) にあります。
+
+### インストール
+
+必要なもの：CUDA Toolkit 13.0（`/usr/local/cuda`）が入った DGX Spark、`g++`、`git`、IQ3_XXS 用に約 **85 GB の空きディスク**
+（モデル、画像エンコーダ、ドラフト層）。Arm64 用のビルド済みエンジンはないので、初回は setup が**エンジンと画像エンコーダを
+このマシンでコンパイル**します（CUDA カーネルが多いので時間がかかります）。そのあとモデルを Hugging Face からダウンロードします。
+途中で止まっても、同じコマンドをもう一度実行すれば続きから再開します。
+
+```
+git clone https://github.com/shi3z/Strata-DGX-Spark.git
+cd Strata-DGX-Spark
+./setup.sh --yes --family qwen --model IQ3_XXS --vision gpu --no-start
+```
+
+### 起動
+
+```
+./run-iq3_xxs.sh
+```
+
+約 40 GB の expert をメモリに読み込むので、**1〜3 分のあいだマシンが重くなることがあります**（初回がいちばん長いです）。
+ターミナルに `ready: http://127.0.0.1:8080/v1` と出たら、ブラウザで **http://127.0.0.1:8080** を開くとチャット画面です
+（画像もここで追加できます）。動作確認は次のコマンドでもできます。
+
+```
+curl http://127.0.0.1:8080/health
+```
+
+API は OpenAI / Anthropic 互換です：`http://127.0.0.1:8080/v1`（詳細は [DETAILS.md](docs/DETAILS.md#using-it)）。
+8080 番ポートがほかのプログラムに使われているときは、別のポートで手動起動します。
+
+```
+.venv/bin/python serve/server.py --engine strata --config strata-iq3_xxs.json --port 8081
+```
+
+### ほかの端末からチャット画面を開く（Tailscale）
+
+DGX Spark の tailnet アドレスだけで待ち受け（`0.0.0.0` ではありません）、ほかの端末が使う名前を許可します。
+
+```
+TS_IP=$(tailscale ip -4)
+TS_NAME=$(tailscale status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))")
+STRATA_ALLOWED_HOSTS="$TS_NAME,$TS_IP" .venv/bin/python serve/server.py --engine strata \
+  --config strata-iq3_xxs.json --host "$TS_IP" --port 8081
+```
+
+そのあと、tailnet 内の端末から `http://<TS_NAME>:8081/` を開きます。到達できるのは tailnet 内の端末だけですが、
+**tailnet 内の誰でもモデルを使えます**。キーを必須にするには、`strata-iq3_xxs.json` に `"api_key": "<長い秘密の文字列>"`
+を追加してください（チャット画面がキーを聞いてきます）。キーなしで `127.0.0.1` や tailnet アドレスの外に公開しないでください。
+
+### x86-64 版との違いと、未対応のこと
+
+- Strata 独自の AVX-512 / AVX-2 の CPU カーネルは x86 専用で、Arm64 では**ビルドされません**。i-quant の expert
+  （IQ2_XS、IQ3_XXS、IQ3_S など）は代わりに ggml-cpu の NEON コードで動くので、**Arm 向けに調整したカーネルはまだありません**。
+- 本来の **Q2_0 pack の CPU カーネルは x86 専用**です。Arm64 では起動時にメッセージを出して止まります。i-quant のサイズを使ってください。
+- GB10 は VRAM の大きさを報告しません（CPU と GPU が 1 つのメモリを共有）。setup は同じバイトを二重に数えないよう、
+  **RAM の 4 分の 1（最大 32 GB）**を VRAM として扱います。
+- このマシンで失敗する setup のテスト（`test_setup_amd`、`test_setup_golden`、`test_setup_choices` の 2 件、
+  `test_setup_unsloth` の 1 件）は、元のコードでもここで同じように失敗します。
+- 変更は 1 つのコミットにまとまっています：`git show 324b0ef`
+
+元のプロジェクト、リリース、ドキュメント：**[github.com/Niko1221/Strata](https://github.com/Niko1221/Strata)**
+
+---
+
+
 <p align="center"><b>1,250 億パラメータの AI モデルを、手元のゲーミング PC で動かす</b><br>
 NVIDIA または AMD のグラフィックカード（12 GB 以上） · Windows または Linux · 無料のオープンソース</p>
 

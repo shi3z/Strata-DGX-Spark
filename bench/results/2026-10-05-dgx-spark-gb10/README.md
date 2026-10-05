@@ -1,6 +1,6 @@
 # Benchmark: NVIDIA GB10 (DGX Spark, Arm64), IQ3_XXS with images on
 
-Measured on 2026-10-04 on one DGX Spark (ASUS Ascent GX10) by the owner of this fork. This is the first run of
+Measured on 2026-10-04 on one ASUS GX10 (a GB10 machine, the same chip as the DGX Spark) by the owner of this fork. This is the first run of
 Strata on an Arm64 machine: the Arm64 port is the commit that adds this folder's parent change (`324b0ef`,
 "Arm64 / NVIDIA GB10 (DGX Spark) support").
 

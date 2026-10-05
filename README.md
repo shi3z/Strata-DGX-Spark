@@ -2,6 +2,103 @@
 
 **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md)
 
+> **This is a fork of [Niko1221/Strata](https://github.com/Niko1221/Strata) that also runs on the NVIDIA DGX Spark
+> (GB10, Arm64).** The original runs on x86-64 PCs only. Everything below the DGX Spark section is the original
+> README and still describes the x86-64 PCs. All credit for the engine goes to the original project.
+
+## Strata on the NVIDIA DGX Spark (GB10, Arm64)
+
+This fork adds an Arm64 port so Strata runs on GB10 machines: tested on an ASUS GX10, which has the same chip as the DGX Spark.
+It chats, writes code and **reads pictures**, the same as on a PC. Tested here: **Qwen3.8-Flash-Next IQ3_XXS with
+images on, a 131,072-token context**. Other sizes should work but were **not tested**.
+
+### How fast is it?
+
+Measured on one ASUS GX10 (a GB10 machine like the DGX Spark; GB10, 20 Arm cores, 121 GiB of memory shared by CPU and GPU), engine 0.1.38, one request
+per row, 128-token answers, greedy decoding:
+
+| Prompt length | Reads your prompt | Writes answers |
+| ---: | ---: | ---: |
+| 6,190 tokens | 1,196 tokens/s | 37 tokens/s |
+| 12,334 tokens | 1,294 tokens/s | 40 tokens/s |
+| 24,622 tokens | 1,332 tokens/s | 39 tokens/s |
+| 49,199 tokens | 1,338 tokens/s | 38 tokens/s |
+| 75,047 tokens | 1,329 tokens/s | 39 tokens/s |
+| 1,582 tokens | **61 tokens/s** | 42 tokens/s |
+| 431 tokens | **56 tokens/s** | 15 tokens/s (the first request after start-up) |
+
+- Writing answers stays at about **38-42 tokens/s** however long the prompt is (up to the 75K tokens measured).
+- **Short prompts are read about 20x slower** than long ones. Why is not yet known.
+- The numbers come from one run per row, on a machine that was also in normal use. Full table, setup and caveats:
+  [bench/results/2026-10-05-dgx-spark-gb10](bench/results/2026-10-05-dgx-spark-gb10/README.md).
+
+### Install
+
+You need a DGX Spark with the CUDA Toolkit 13.0 (`/usr/local/cuda`), `g++` and `git`, and about **85 GB of free disk**
+for IQ3_XXS (model, image encoder and draft layer). There is no ready-made Arm64 engine, so setup **compiles the engine
+and the image encoder on your machine** the first time (a while: it builds many CUDA kernels). It then downloads the
+model from Hugging Face. If it stops, run the same command again: it continues.
+
+```
+git clone https://github.com/shi3z/Strata-DGX-Spark.git
+cd Strata-DGX-Spark
+./setup.sh --yes --family qwen --model IQ3_XXS --vision gpu --no-start
+```
+
+### Start it
+
+```
+./run-iq3_xxs.sh
+```
+
+It loads about 40 GB of experts into memory: **the machine can be slow for 1-3 minutes** and the first start is the
+longest. When the terminal prints `ready: http://127.0.0.1:8080/v1`, open **http://127.0.0.1:8080** in a browser for
+the chat page (pictures can be added there), or check it:
+
+```
+curl http://127.0.0.1:8080/health
+```
+
+The API is OpenAI- and Anthropic-compatible: `http://127.0.0.1:8080/v1` (more in [DETAILS.md](docs/DETAILS.md#using-it)).
+If port 8080 is taken by another program, start it by hand on another port:
+
+```
+.venv/bin/python serve/server.py --engine strata --config strata-iq3_xxs.json --port 8081
+```
+
+### Open the chat page from other devices (Tailscale)
+
+Listen on the DGX Spark's tailnet address only (not on `0.0.0.0`), and allow the names other devices use for it:
+
+```
+TS_IP=$(tailscale ip -4)
+TS_NAME=$(tailscale status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))")
+STRATA_ALLOWED_HOSTS="$TS_NAME,$TS_IP" .venv/bin/python serve/server.py --engine strata \
+  --config strata-iq3_xxs.json --host "$TS_IP" --port 8081
+```
+
+Then open `http://<TS_NAME>:8081/` from any device on your tailnet. Only devices on your tailnet can reach it, but
+**anyone on the tailnet can use the model**: to require a key, add `"api_key": "<a long secret>"` to
+`strata-iq3_xxs.json` (the chat page then asks for it). Never listen beyond `127.0.0.1` or your tailnet address
+without a key.
+
+### What is different from the x86-64 build, and what is not done
+
+- Strata's own AVX-512 / AVX-2 CPU kernels are x86-only and are **not built** on Arm64. The i-quant experts
+  (IQ2_XS, IQ3_XXS, IQ3_S, ...) run on ggml-cpu's NEON code instead, so **there are no tuned Arm kernels yet**.
+- The canonical **Q2_0 pack's CPU kernel is x86-only**: on Arm64 it stops at start with a clear message. Use an
+  i-quant size.
+- A GB10 reports no VRAM size (CPU and GPU share one memory). Setup counts **a quarter of the RAM, at most 32 GB,** as
+  VRAM so the same bytes are not counted twice.
+- The setup tests that fail on this machine (`test_setup_amd`, `test_setup_golden`, two in `test_setup_choices`, one
+  in `test_setup_unsloth`) fail the same way on the original code here.
+- The changes are in one commit: `git show 324b0ef`.
+
+Original project, releases and documentation: **[github.com/Niko1221/Strata](https://github.com/Niko1221/Strata)**.
+
+---
+
+
 <p align="center"><b>Run a 125-billion-parameter AI model on your own gaming PC</b><br>
 NVIDIA or AMD graphics card (12 GB or more) · Windows or Linux · free and open source</p>
 
