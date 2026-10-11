@@ -54,6 +54,7 @@ sys.path.insert(0, str(ROOT))   # run as a script (run-<model>.bat) as well as a
 from serve.frontend import (ChatTemplate, Event, OutputParser, anthropic_to_messages,  # noqa: E402
                             images_of, mark_think_literals, openai_to_messages, unmark_think_literals)
 from serve.mcp import McpCancelled, hub_from_config  # noqa: E402
+from serve.admission import AdmissionGate
 from serve import runconfig  # noqa: E402
 from serve.winjob import contain  # noqa: E402
 from serve.structured import StructuredOutputError, prepare_format, validated_json  # noqa: E402
@@ -1657,6 +1658,7 @@ class Service:
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
         self.shared_path = None                       # where they are kept between starts (next to the config)
+        self.admission = AdmissionGate()
         self.fifo = threading.Lock()
         self.embeddings = threading.local()           # the current request's image embeddings file (GENI)
         self.api_key = ""                              # when set, /v1/* needs it (Bearer or x-api-key)
@@ -2959,6 +2961,10 @@ def make_handler(svc: Service):
             return False
 
         def do_GET(self):
+            if self.path.split("?")[0].rstrip("/") == "/admin/drain":
+                if self._authorized():
+                    self._json(200, svc.admission.snapshot())
+                return
             path = self.path.split("?")[0].rstrip("/")
             if path.startswith("/fonts/"):
                 # the web app's font (Outfit, OFL: serve/web/fonts); the page falls back to the system font
@@ -3078,6 +3084,58 @@ def make_handler(svc: Service):
         def do_POST(self):
             if not self._authorized():
                 return
+            path = self.path.split("?")[0].rstrip("/")
+            if path == "/admin/drain":
+                if self.client_address[0] not in ("127.0.0.1", "::1") or self.headers.get("Origin"):
+                    self._json(403, {"error": "local service clients only"})
+                    return
+                if not self._own_page("drain can be changed"):
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 4096 or self.headers.get("Transfer-Encoding"):
+                        raise ValueError("drain requires a JSON body of at most 4096 bytes")
+                    timeout = self.connection.gettimeout()
+                    try:
+                        self.connection.settimeout(2)
+                        raw = self.rfile.read(length)
+                    finally:
+                        self.connection.settimeout(timeout)
+                    if len(raw) != length:
+                        raise ValueError("incomplete body")
+                    req = json.loads(raw)
+                    if req.get("action") == "drain":
+                        result = svc.admission.drain()
+                    elif req.get("action") == "resume":
+                        result = svc.admission.resume(req.get("token"))
+                    else:
+                        raise ValueError("action must be drain or resume")
+                    self._json(200, result)
+                except (OSError, ValueError, AttributeError) as exc:
+                    self._json(409, {"error": str(exc)})
+                return
+            guarded = path in {"/v1/chat/completions", "/v1/messages", "/v1/responses",
+                               "/v1/messages/count_tokens", "/documents/pdf", "/load", "/v1/load", "/v1/vram"}
+            if guarded and not svc.admission.enter():
+                self._json(503, {"error": {"type": "server_draining", "message": "Server is draining; retry after switching completes"}})
+                return
+            try:
+                admission_url = os.environ.get("STRATA_ADMISSION_URL")
+                if guarded and admission_url:
+                    try:
+                        with urllib.request.urlopen(admission_url, timeout=2) as response:
+                            allowed = json.load(response)
+                        if allowed.get("ok") is not True:
+                            raise ValueError(allowed.get("reason", "memory_unknown"))
+                    except (OSError, ValueError) as exc:
+                        self._json(503, {"error": {"type": "memory_admission", "message": str(exc)}})
+                        return
+                self._dispatch_POST()
+            finally:
+                if guarded:
+                    svc.admission.leave()
+
+        def _dispatch_POST(self):
             path = self.path.split("?")[0].rstrip("/")   # issue #55: Claude Code posts /v1/messages?beta=true
             if path.startswith("/v1/") and self._foreign_page():
                 return
